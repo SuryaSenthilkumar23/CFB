@@ -1,0 +1,61 @@
+{
+  "app": {
+    "title": "CivicLens AI",
+    "subtitle": "AI-Powered Civic Issue Reporting",
+    "description": "Report civic issues using voice or text input with AI assistance"
+  },
+  "form": {
+    "title": "Report a Civic Issue",
+    "description": "Describe the civic issue you want to report",
+    "descriptionPlaceholder": "Describe the issue in detail (e.g., 'There's a large pothole on Main Street near the school')",
+    "address": "Address",
+    "addressPlaceholder": "Enter the address where the issue is located",
+    "category": "Category",
+    "categories": {
+      "pothole": "Pothole",
+      "garbage": "Garbage/Waste",
+      "streetlight": "Street Light",
+      "water": "Water Issue",
+      "drainage": "Drainage",
+      "other": "Other"
+    },
+    "voiceInput": "Voice Input",
+    "textInput": "Text Input",
+    "recording": "Recording...",
+    "stopRecording": "Stop Recording",
+    "startRecording": "Start Recording",
+    "submit": "Submit Report",
+    "submitting": "Submitting..."
+  },
+  "results": {
+    "title": "Generated Complaint Report",
+    "originalText": "Original Description",
+    "formalComplaint": "Formal Complaint",
+    "translatedText": "Translated Text",
+    "summary": "Summary",
+    "wardGuess": "Estimated Ward",
+    "actions": {
+      "copy": "Copy to Clipboard",
+      "download": "Download PDF",
+      "copied": "Copied!",
+      "newReport": "Submit New Report"
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "close": "Close",
+    "paused": "Paused",
+    "recorded": "Recorded"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": "Network error. Please check your connection.",
+    "validation": "Please fill in all required fields.",
+    "voice": "Voice recording failed. Please try again.",
+    "generation": "Failed to generate complaint. Please try again."
+  }
+}
