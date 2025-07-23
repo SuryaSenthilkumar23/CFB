@@ -1,0 +1,69 @@
+{
+  "timestamp": "20250723_120451",
+  "experiment_type": "streamlined_ultimate_stacking",
+  "runtime_seconds": 532.561937,
+  "feature_count": 129,
+  "target_properties": 10,
+  "cv_scores": {
+    "BlendProperty1": {
+      "mae_mean": 0.24898434081322254,
+      "mae_std": 0.004061619313038427,
+      "mse_mean": 0.10327165847313537
+    },
+    "BlendProperty2": {
+      "mae_mean": 0.2481522928773597,
+      "mae_std": 0.009908674350982555,
+      "mse_mean": 0.10015053075407247
+    },
+    "BlendProperty3": {
+      "mae_mean": 0.29122336552437544,
+      "mae_std": 0.005570483790929101,
+      "mse_mean": 0.1412941384281344
+    },
+    "BlendProperty4": {
+      "mae_mean": 0.2537394856762183,
+      "mae_std": 0.008450115990399394,
+      "mse_mean": 0.1073909185253525
+    },
+    "BlendProperty5": {
+      "mae_mean": 0.23976489453977234,
+      "mae_std": 0.004930376622266445,
+      "mse_mean": 0.12328606816748337
+    },
+    "BlendProperty6": {
+      "mae_mean": 0.31826339598652487,
+      "mae_std": 0.0027493644946200747,
+      "mse_mean": 0.1697053713145095
+    },
+    "BlendProperty7": {
+      "mae_mean": 0.2905707828233917,
+      "mae_std": 0.0037434689515179146,
+      "mse_mean": 0.1429499084714719
+    },
+    "BlendProperty8": {
+      "mae_mean": 0.2932970953198852,
+      "mae_std": 0.006453655311752185,
+      "mse_mean": 0.1444521667736663
+    },
+    "BlendProperty9": {
+      "mae_mean": 0.3284679971439992,
+      "mae_std": 0.006643679439167645,
+      "mse_mean": 0.18483132417529688
+    },
+    "BlendProperty10": {
+      "mae_mean": 0.2023991637936693,
+      "mae_std": 0.010014677315132814,
+      "mse_mean": 0.06907947792482118
+    }
+  },
+  "model_summary": {
+    "base_models": [
+      "CatBoost-like",
+      "LightGBM-like",
+      "Ridge"
+    ],
+    "meta_model": "Optimized Weighted Ensemble",
+    "cross_validation": "3-fold with MAE/MSE"
+  },
+  "overall_mae": 0.2714862814498418
+}
