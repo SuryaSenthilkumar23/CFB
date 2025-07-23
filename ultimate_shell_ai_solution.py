@@ -807,11 +807,18 @@ def ultimate_robust_scale(X_train: List[List], X_test: List[List]) -> Tuple[List
     
     print("📊 Ultimate robust scaling...")
     
-    n_features = len(X_train[0])
+    # Ensure consistent feature count
+    n_features_train = len(X_train[0]) if X_train else 0
+    n_features_test = len(X_test[0]) if X_test else 0
+    n_features = min(n_features_train, n_features_test)
+    
+    print(f"   Train features: {n_features_train}, Test features: {n_features_test}")
+    print(f"   Using {n_features} features for consistency")
+    
     scalers = []
     
     for j in range(n_features):
-        feature_values = [row[j] for row in X_train if isinstance(row[j], (int, float))]
+        feature_values = [row[j] for row in X_train if j < len(row) and isinstance(row[j], (int, float))]
         
         if feature_values and len(feature_values) > 1:
             # Robust statistics using percentiles
@@ -835,10 +842,10 @@ def ultimate_robust_scale(X_train: List[List], X_test: List[List]) -> Tuple[List
         scaled_data = []
         for row in data:
             scaled_row = []
-            for j, val in enumerate(row):
-                if isinstance(val, (int, float)):
+            for j in range(n_features):  # Only process n_features
+                if j < len(row) and isinstance(row[j], (int, float)):
                     center, scale = scalers[j]
-                    scaled_val = (val - center) / scale
+                    scaled_val = (row[j] - center) / scale
                     # Robust clipping
                     scaled_val = max(-5, min(5, scaled_val))
                     scaled_row.append(scaled_val)
