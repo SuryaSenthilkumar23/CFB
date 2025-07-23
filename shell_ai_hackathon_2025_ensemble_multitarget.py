@@ -11,16 +11,15 @@ Author: AI Assistant
 Date: 2025
 """
 
-import pandas as pd
-import numpy as np
-import warnings
+import csv
+import math
+import random
 from typing import Dict, List, Tuple, Any
 import os
 import sys
 
 # Configuration
-warnings.filterwarnings('ignore')
-np.random.seed(42)
+random.seed(42)
 
 class ShellAIMultiTargetEnsemble:
     """
@@ -42,206 +41,423 @@ class ShellAIMultiTargetEnsemble:
         self.models = {}
         self.scalers = {}
         
-    def load_and_preprocess_data(self, train_path: str, test_path: str, sample_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    def load_csv(self, filepath: str) -> Tuple[List[str], List[List[float]]]:
+        """Load CSV file and return headers and data"""
+        with open(filepath, 'r') as f:
+            reader = csv.reader(f)
+            headers = next(reader)
+            data = []
+            for row in reader:
+                # Convert to float, handle missing values
+                numeric_row = []
+                for val in row:
+                    try:
+                        if val == '' or val.lower() == 'nan':
+                            numeric_row.append(0.0)  # Fill missing with 0
+                        else:
+                            numeric_row.append(float(val))
+                    except ValueError:
+                        # Non-numeric values (like ID strings)
+                        numeric_row.append(val)
+                data.append(numeric_row)
+        return headers, data
+    
+    def load_and_preprocess_data(self, train_path: str, test_path: str, sample_path: str) -> Tuple[Dict, Dict, Dict]:
         """Load and preprocess the dataset"""
         print("🔄 Loading datasets...")
         
         # Load data
-        train_df = pd.read_csv(train_path)
-        test_df = pd.read_csv(test_path)
-        sample_df = pd.read_csv(sample_path)
+        train_headers, train_data = self.load_csv(train_path)
+        test_headers, test_data = self.load_csv(test_path)
+        sample_headers, sample_data = self.load_csv(sample_path)
+        
+        train_dict = {'headers': train_headers, 'data': train_data}
+        test_dict = {'headers': test_headers, 'data': test_data}
+        sample_dict = {'headers': sample_headers, 'data': sample_data}
         
         print(f"📊 Dataset shapes:")
-        print(f"   Train: {train_df.shape}")
-        print(f"   Test: {test_df.shape}")
-        print(f"   Sample: {sample_df.shape}")
+        print(f"   Train: {len(train_data)} x {len(train_headers)}")
+        print(f"   Test: {len(test_data)} x {len(test_headers)}")
+        print(f"   Sample: {len(sample_data)} x {len(sample_headers)}")
         
-        # Handle missing values
-        print(f"\n🔍 Data Quality Check:")
-        train_missing = train_df.isnull().sum().sum()
-        test_missing = test_df.isnull().sum().sum()
-        print(f"   Train missing values: {train_missing}")
-        print(f"   Test missing values: {test_missing}")
-        
-        if train_missing > 0:
-            print("⚠️  Handling missing values in training data...")
-            numeric_cols = train_df.select_dtypes(include=[np.number]).columns
-            train_df[numeric_cols] = train_df[numeric_cols].fillna(train_df[numeric_cols].median())
-            
-        if test_missing > 0:
-            print("⚠️  Handling missing values in test data...")
-            numeric_cols = test_df.select_dtypes(include=[np.number]).columns
-            test_df[numeric_cols] = test_df[numeric_cols].fillna(test_df[numeric_cols].median())
-        
-        return train_df, test_df, sample_df
+        return train_dict, test_dict, sample_dict
     
-    def engineer_features(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def calculate_stats(self, values: List[float]) -> Dict[str, float]:
+        """Calculate basic statistics for a list of values"""
+        if not values:
+            return {'mean': 0, 'std': 0, 'min': 0, 'max': 0}
+        
+        n = len(values)
+        mean_val = sum(values) / n
+        variance = sum((x - mean_val) ** 2 for x in values) / n if n > 1 else 0
+        std_val = math.sqrt(variance)
+        
+        return {
+            'mean': mean_val,
+            'std': std_val,
+            'min': min(values),
+            'max': max(values)
+        }
+    
+    def engineer_features(self, train_dict: Dict, test_dict: Dict) -> Tuple[Dict, Dict]:
         """Advanced feature engineering for fuel blend prediction"""
         print("🔧 Engineering features...")
         
-        def add_features(df):
-            df_new = df.copy()
+        def add_features(data_dict):
+            headers = data_dict['headers']
+            data = data_dict['data']
             
-            # Component fractions
-            component_cols = [col for col in df.columns if 'fraction' in col.lower()]
-            print(f"   Found {len(component_cols)} component fraction columns")
+            # Find column indices
+            component_indices = [i for i, h in enumerate(headers) if 'fraction' in h.lower()]
+            property_indices = [i for i, h in enumerate(headers) if 'Property' in h]
             
-            if len(component_cols) > 0:
+            print(f"   Found {len(component_indices)} component fraction columns")
+            print(f"   Found {len(property_indices)} property columns")
+            
+            new_headers = headers.copy()
+            new_data = []
+            
+            for row in data:
+                new_row = row.copy()
+                
                 # Component statistics
-                df_new['total_components'] = df_new[component_cols].sum(axis=1)
-                df_new['max_component'] = df_new[component_cols].max(axis=1)
-                df_new['min_component'] = df_new[component_cols].min(axis=1)
-                df_new['component_range'] = df_new['max_component'] - df_new['min_component']
-                df_new['component_std'] = df_new[component_cols].std(axis=1)
-                df_new['component_entropy'] = -np.sum(df_new[component_cols] * np.log(df_new[component_cols] + 1e-8), axis=1)
+                if component_indices:
+                    comp_values = [row[i] for i in component_indices if isinstance(row[i], (int, float))]
+                    if comp_values:
+                        stats = self.calculate_stats(comp_values)
+                        new_row.extend([
+                            sum(comp_values),  # total_components
+                            stats['max'],      # max_component
+                            stats['min'],      # min_component
+                            stats['max'] - stats['min'],  # component_range
+                            stats['std'],      # component_std
+                        ])
+                        
+                        # Component ratios (first 3 pairs to avoid too many features)
+                        for i in range(min(3, len(comp_values))):
+                            for j in range(i+1, min(3, len(comp_values))):
+                                ratio = comp_values[i] / (comp_values[j] + 1e-8)
+                                new_row.append(ratio)
                 
-                # Dominant component analysis
-                df_new['dominant_component'] = df_new[component_cols].idxmax(axis=1)
-                df_new['dominant_component_value'] = df_new[component_cols].max(axis=1)
+                # Property statistics
+                if property_indices:
+                    prop_values = [row[i] for i in property_indices if isinstance(row[i], (int, float))]
+                    if prop_values:
+                        stats = self.calculate_stats(prop_values)
+                        new_row.extend([
+                            stats['mean'],     # mean_all_properties
+                            stats['std'],      # std_all_properties
+                            stats['max'],      # max_all_properties
+                            stats['min'],      # min_all_properties
+                            stats['max'] - stats['min'],  # range_all_properties
+                        ])
+                        
+                        # Component-wise property statistics
+                        for comp in range(1, 6):
+                            comp_props = [row[i] for i, h in enumerate(headers) 
+                                        if f'Component{comp}' in h and 'Property' in h 
+                                        and isinstance(row[i], (int, float))]
+                            if comp_props:
+                                comp_stats = self.calculate_stats(comp_props)
+                                new_row.extend([comp_stats['mean'], comp_stats['std']])
+                        
+                        # Property-wise statistics across components (first 5 properties)
+                        for prop in range(1, 6):
+                            prop_across_comps = [row[i] for i, h in enumerate(headers) 
+                                               if f'Property{prop}' in h 
+                                               and isinstance(row[i], (int, float))]
+                            if prop_across_comps:
+                                prop_stats = self.calculate_stats(prop_across_comps)
+                                new_row.extend([prop_stats['mean'], prop_stats['std']])
                 
-                # Component ratios
-                for i in range(len(component_cols)):
-                    for j in range(i+1, len(component_cols)):
-                        col1, col2 = component_cols[i], component_cols[j]
-                        df_new[f'ratio_{col1}_{col2}'] = df_new[col1] / (df_new[col2] + 1e-8)
+                # Interaction features (component fractions * average properties)
+                if component_indices and property_indices:
+                    for comp in range(1, 6):
+                        comp_frac_idx = None
+                        for i, h in enumerate(headers):
+                            if f'Component{comp}_fraction' in h:
+                                comp_frac_idx = i
+                                break
+                        
+                        if comp_frac_idx is not None and isinstance(row[comp_frac_idx], (int, float)):
+                            comp_props = [row[i] for i, h in enumerate(headers) 
+                                        if f'Component{comp}' in h and 'Property' in h 
+                                        and isinstance(row[i], (int, float))]
+                            if comp_props:
+                                avg_prop = sum(comp_props) / len(comp_props)
+                                weighted_prop = row[comp_frac_idx] * avg_prop
+                                new_row.append(weighted_prop)
+                
+                new_data.append(new_row)
             
-            # Property features by component
-            property_cols = [col for col in df.columns if 'Property' in col]
-            print(f"   Found {len(property_cols)} property columns")
+            # Create new headers for engineered features
+            if component_indices:
+                new_headers.extend([
+                    'total_components', 'max_component', 'min_component', 
+                    'component_range', 'component_std'
+                ])
+                # Add ratio headers
+                for i in range(min(3, len(component_indices))):
+                    for j in range(i+1, min(3, len(component_indices))):
+                        new_headers.append(f'ratio_comp{i+1}_comp{j+1}')
             
-            if len(property_cols) > 0:
-                # Overall property statistics
-                df_new['mean_all_properties'] = df_new[property_cols].mean(axis=1)
-                df_new['std_all_properties'] = df_new[property_cols].std(axis=1)
-                df_new['max_all_properties'] = df_new[property_cols].max(axis=1)
-                df_new['min_all_properties'] = df_new[property_cols].min(axis=1)
-                df_new['range_all_properties'] = df_new['max_all_properties'] - df_new['min_all_properties']
-                
-                # Component-wise property statistics
-                for comp in range(1, 6):  # Components 1-5
-                    comp_props = [col for col in property_cols if f'Component{comp}' in col]
-                    if comp_props:
-                        df_new[f'mean_comp{comp}_properties'] = df_new[comp_props].mean(axis=1)
-                        df_new[f'std_comp{comp}_properties'] = df_new[comp_props].std(axis=1)
-                        df_new[f'max_comp{comp}_properties'] = df_new[comp_props].max(axis=1)
-                        df_new[f'min_comp{comp}_properties'] = df_new[comp_props].min(axis=1)
-                
-                # Property-wise statistics across components
-                for prop in range(1, 11):  # Properties 1-10
-                    prop_cols = [col for col in property_cols if f'Property{prop}' in col]
-                    if prop_cols:
-                        df_new[f'mean_prop{prop}_across_comps'] = df_new[prop_cols].mean(axis=1)
-                        df_new[f'std_prop{prop}_across_comps'] = df_new[prop_cols].std(axis=1)
-                        df_new[f'max_prop{prop}_across_comps'] = df_new[prop_cols].max(axis=1)
-                        df_new[f'min_prop{prop}_across_comps'] = df_new[prop_cols].min(axis=1)
-            
-            # Interaction features between components and properties
-            if len(component_cols) > 0 and len(property_cols) > 0:
+            if property_indices:
+                new_headers.extend([
+                    'mean_all_properties', 'std_all_properties', 'max_all_properties',
+                    'min_all_properties', 'range_all_properties'
+                ])
+                # Component-wise stats
                 for comp in range(1, 6):
-                    comp_frac_col = f'Component{comp}_fraction'
-                    if comp_frac_col in df.columns:
-                        comp_props = [col for col in property_cols if f'Component{comp}' in col]
-                        for prop_col in comp_props:
-                            # Weighted property by component fraction
-                            df_new[f'weighted_{prop_col}'] = df_new[comp_frac_col] * df_new[prop_col]
+                    new_headers.extend([f'mean_comp{comp}_properties', f'std_comp{comp}_properties'])
+                # Property-wise stats
+                for prop in range(1, 6):
+                    new_headers.extend([f'mean_prop{prop}_across_comps', f'std_prop{prop}_across_comps'])
             
-            # Polynomial features for key variables
-            key_cols = component_cols + [col for col in df_new.columns if 'mean_' in col][:10]
-            for col in key_cols:
-                if col in df_new.columns and df_new[col].std() > 1e-8:
-                    df_new[f'{col}_squared'] = df_new[col] ** 2
-                    df_new[f'{col}_sqrt'] = np.sqrt(np.abs(df_new[col]))
+            # Interaction headers
+            if component_indices and property_indices:
+                for comp in range(1, 6):
+                    new_headers.append(f'weighted_comp{comp}_avg_prop')
             
-            return df_new
+            return {'headers': new_headers, 'data': new_data}
         
         # Apply feature engineering
-        train_enhanced = add_features(train_df)
-        test_enhanced = add_features(test_df)
+        train_enhanced = add_features(train_dict)
+        test_enhanced = add_features(test_dict)
         
         print(f"✅ Feature engineering complete:")
-        print(f"   Original features: {train_df.shape[1]}")
-        print(f"   Enhanced features: {train_enhanced.shape[1]}")
+        print(f"   Original features: {len(train_dict['headers'])}")
+        print(f"   Enhanced features: {len(train_enhanced['headers'])}")
         
         return train_enhanced, test_enhanced
     
-    def prepare_features_and_targets(self, train_df: pd.DataFrame, test_df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def prepare_features_and_targets(self, train_dict: Dict, test_dict: Dict) -> Tuple[List[List[float]], List[List[float]], List[List[float]]]:
         """Prepare features and targets for modeling"""
         print("📋 Preparing features and targets...")
         
-        # Identify target columns (BlendProperty1-10)
-        target_cols = [col for col in train_df.columns if 'BlendProperty' in col]
-        if not target_cols:
-            # Fallback: assume last 10 columns are targets
-            target_cols = train_df.columns[-10:].tolist()
+        train_headers = train_dict['headers']
+        train_data = train_dict['data']
+        test_headers = test_dict['headers']
+        test_data = test_dict['data']
         
-        self.target_names = sorted(target_cols)
+        # Identify target columns (BlendProperty1-10)
+        target_indices = [i for i, h in enumerate(train_headers) if 'BlendProperty' in h]
+        if not target_indices:
+            # Fallback: assume last 10 columns are targets
+            target_indices = list(range(len(train_headers) - 10, len(train_headers)))
+        
+        self.target_names = [train_headers[i] for i in target_indices]
         print(f"🎯 Target columns: {self.target_names}")
         
         # Prepare features (exclude ID and target columns)
-        feature_cols = [col for col in train_df.columns if col not in ['ID'] + target_cols]
-        self.feature_names = feature_cols
-        print(f"📊 Feature columns: {len(feature_cols)}")
+        feature_indices = [i for i, h in enumerate(train_headers) 
+                          if h not in ['ID'] and i not in target_indices]
+        self.feature_names = [train_headers[i] for i in feature_indices]
+        print(f"📊 Feature columns: {len(feature_indices)}")
         
-        X_train = train_df[feature_cols].values
-        y_train = train_df[target_cols].values
-        X_test = test_df[feature_cols].values
+        # Find matching features in test data
+        test_feature_indices = []
+        for feature_name in self.feature_names:
+            try:
+                test_idx = test_headers.index(feature_name)
+                test_feature_indices.append(test_idx)
+            except ValueError:
+                # Feature not found in test data, will use 0.0
+                test_feature_indices.append(-1)
+        
+        # Extract features and targets
+        X_train = []
+        y_train = []
+        for row in train_data:
+            # Features
+            feature_row = []
+            for i in feature_indices:
+                if i < len(row) and isinstance(row[i], (int, float)):
+                    feature_row.append(row[i])
+                else:
+                    feature_row.append(0.0)
+            X_train.append(feature_row)
+            
+            # Targets
+            target_row = []
+            for i in target_indices:
+                if i < len(row) and isinstance(row[i], (int, float)):
+                    target_row.append(row[i])
+                else:
+                    target_row.append(0.0)
+            y_train.append(target_row)
+        
+        # Extract test features
+        X_test = []
+        for row in test_data:
+            feature_row = []
+            for i in test_feature_indices:
+                if i >= 0 and i < len(row) and isinstance(row[i], (int, float)):
+                    feature_row.append(row[i])
+                else:
+                    feature_row.append(0.0)
+            X_test.append(feature_row)
         
         print(f"📊 Final dataset shapes:")
-        print(f"   X_train: {X_train.shape}")
-        print(f"   y_train: {y_train.shape}")
-        print(f"   X_test: {X_test.shape}")
-        
-        # Handle infinite and missing values
-        X_train = np.nan_to_num(X_train, nan=0.0, posinf=1e10, neginf=-1e10)
-        X_test = np.nan_to_num(X_test, nan=0.0, posinf=1e10, neginf=-1e10)
-        y_train = np.nan_to_num(y_train, nan=0.0, posinf=1e10, neginf=-1e10)
+        print(f"   X_train: {len(X_train)} x {len(X_train[0]) if X_train else 0}")
+        print(f"   y_train: {len(y_train)} x {len(y_train[0]) if y_train else 0}")
+        print(f"   X_test: {len(X_test)} x {len(X_test[0]) if X_test else 0}")
         
         return X_train, y_train, X_test
     
-    def standardize_features(self, X_train: np.ndarray, X_test: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def calculate_median(self, values: List[float]) -> float:
+        """Calculate median of a list of values"""
+        sorted_vals = sorted(values)
+        n = len(sorted_vals)
+        if n % 2 == 0:
+            return (sorted_vals[n//2 - 1] + sorted_vals[n//2]) / 2
+        else:
+            return sorted_vals[n//2]
+    
+    def standardize_features(self, X_train: List[List[float]], X_test: List[List[float]]) -> Tuple[List[List[float]], List[List[float]]]:
         """Standardize features using robust scaling"""
         print("⚖️  Standardizing features...")
         
-        # Calculate robust statistics (median and MAD)
-        medians = np.median(X_train, axis=0)
-        mads = np.median(np.abs(X_train - medians), axis=0)
+        if not X_train or not X_train[0]:
+            return X_train, X_test
         
-        # Avoid division by zero
-        mads = np.where(mads == 0, 1, mads)
+        n_features = len(X_train[0])
+        
+        # Calculate medians and MADs for each feature
+        medians = []
+        mads = []
+        
+        for j in range(n_features):
+            # Get all values for feature j
+            feature_values = [X_train[i][j] for i in range(len(X_train))]
+            median_val = self.calculate_median(feature_values)
+            medians.append(median_val)
+            
+            # Calculate MAD (Median Absolute Deviation)
+            abs_deviations = [abs(val - median_val) for val in feature_values]
+            mad_val = self.calculate_median(abs_deviations)
+            if mad_val == 0:
+                mad_val = 1.0  # Avoid division by zero
+            mads.append(mad_val)
         
         # Store scalers
         self.scalers = {'medians': medians, 'mads': mads}
         
-        # Apply scaling
-        X_train_scaled = (X_train - medians) / mads
-        X_test_scaled = (X_test - medians) / mads
+        # Apply scaling to training data
+        X_train_scaled = []
+        for i in range(len(X_train)):
+            scaled_row = [(X_train[i][j] - medians[j]) / mads[j] for j in range(n_features)]
+            X_train_scaled.append(scaled_row)
+        
+        # Apply scaling to test data
+        X_test_scaled = []
+        for i in range(len(X_test)):
+            scaled_row = [(X_test[i][j] - medians[j]) / mads[j] for j in range(n_features)]
+            X_test_scaled.append(scaled_row)
         
         return X_train_scaled, X_test_scaled
     
-    def ridge_regression(self, X: np.ndarray, y: np.ndarray, alpha: float = 1.0) -> np.ndarray:
-        """Ridge regression implementation"""
-        n_features = X.shape[1]
-        I = np.eye(n_features)
+    def matrix_multiply(self, A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
+        """Multiply two matrices"""
+        rows_A, cols_A = len(A), len(A[0]) if A else 0
+        rows_B, cols_B = len(B), len(B[0]) if B else 0
         
-        try:
-            # Ridge regression: (X^T X + alpha*I)^(-1) X^T y
-            XtX = X.T @ X
-            XtX_reg = XtX + alpha * I
-            Xty = X.T @ y
-            weights = np.linalg.solve(XtX_reg, Xty)
-        except np.linalg.LinAlgError:
-            # Fallback to pseudo-inverse if singular
-            weights = np.linalg.pinv(X.T @ X + alpha * I) @ X.T @ y
+        if cols_A != rows_B:
+            raise ValueError("Matrix dimensions don't match for multiplication")
+        
+        result = [[0.0 for _ in range(cols_B)] for _ in range(rows_A)]
+        for i in range(rows_A):
+            for j in range(cols_B):
+                for k in range(cols_A):
+                    result[i][j] += A[i][k] * B[k][j]
+        return result
+    
+    def transpose(self, matrix: List[List[float]]) -> List[List[float]]:
+        """Transpose a matrix"""
+        if not matrix or not matrix[0]:
+            return []
+        return [[matrix[i][j] for i in range(len(matrix))] for j in range(len(matrix[0]))]
+    
+    def add_matrices(self, A: List[List[float]], B: List[List[float]]) -> List[List[float]]:
+        """Add two matrices"""
+        return [[A[i][j] + B[i][j] for j in range(len(A[0]))] for i in range(len(A))]
+    
+    def solve_linear_system(self, A: List[List[float]], b: List[float]) -> List[float]:
+        """Solve linear system Ax = b using Gaussian elimination"""
+        n = len(A)
+        
+        # Create augmented matrix
+        aug = [row[:] + [b[i]] for i, row in enumerate(A)]
+        
+        # Forward elimination
+        for i in range(n):
+            # Find pivot
+            max_row = i
+            for k in range(i + 1, n):
+                if abs(aug[k][i]) > abs(aug[max_row][i]):
+                    max_row = k
+            aug[i], aug[max_row] = aug[max_row], aug[i]
             
+            # Make all rows below this one 0 in current column
+            for k in range(i + 1, n):
+                if aug[i][i] != 0:
+                    factor = aug[k][i] / aug[i][i]
+                    for j in range(i, n + 1):
+                        aug[k][j] -= factor * aug[i][j]
+        
+        # Back substitution
+        x = [0.0] * n
+        for i in range(n - 1, -1, -1):
+            x[i] = aug[i][n]
+            for j in range(i + 1, n):
+                x[i] -= aug[i][j] * x[j]
+            if aug[i][i] != 0:
+                x[i] /= aug[i][i]
+        
+        return x
+    
+    def ridge_regression(self, X: List[List[float]], y: List[float], alpha: float = 1.0) -> List[float]:
+        """Ridge regression implementation"""
+        if not X or not X[0]:
+            return []
+        
+        n_features = len(X[0])
+        
+        # X^T
+        Xt = self.transpose(X)
+        
+        # X^T @ X
+        XtX = self.matrix_multiply(Xt, X)
+        
+        # Add regularization: X^T @ X + alpha * I
+        for i in range(n_features):
+            XtX[i][i] += alpha
+        
+        # X^T @ y
+        Xty = [sum(Xt[i][j] * y[j] for j in range(len(y))) for i in range(n_features)]
+        
+        # Solve (X^T @ X + alpha * I) @ weights = X^T @ y
+        try:
+            weights = self.solve_linear_system(XtX, Xty)
+        except:
+            # Fallback to simple solution if system is singular
+            weights = [0.0] * n_features
+        
         return weights
     
-    def predict_ridge(self, X: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    def predict_ridge(self, X: List[List[float]], weights: List[float]) -> List[float]:
         """Make predictions using ridge regression weights"""
-        return X @ weights
+        if not X or not weights:
+            return []
+        
+        predictions = []
+        for row in X:
+            pred = sum(row[j] * weights[j] for j in range(len(weights)))
+            predictions.append(pred)
+        return predictions
     
-    def cross_validate_alpha(self, X: np.ndarray, y: np.ndarray, alphas: List[float]) -> float:
+    def cross_validate_alpha(self, X: List[List[float]], y: List[float], alphas: List[float]) -> float:
         """Find best alpha using cross-validation"""
-        n_samples = X.shape[0]
+        n_samples = len(X)
         fold_size = n_samples // self.n_folds
         best_alpha = alphas[0]
         best_score = float('inf')
@@ -254,41 +470,44 @@ class ShellAIMultiTargetEnsemble:
                 val_start = fold * fold_size
                 val_end = val_start + fold_size if fold < self.n_folds - 1 else n_samples
                 
-                val_idx = list(range(val_start, val_end))
-                train_idx = list(range(0, val_start)) + list(range(val_end, n_samples))
-                
-                X_fold_train, X_fold_val = X[train_idx], X[val_idx]
-                y_fold_train, y_fold_val = y[train_idx], y[val_idx]
+                # Split data
+                X_fold_train = [X[i] for i in range(n_samples) if i < val_start or i >= val_end]
+                X_fold_val = [X[i] for i in range(val_start, val_end)]
+                y_fold_train = [y[i] for i in range(n_samples) if i < val_start or i >= val_end]
+                y_fold_val = [y[i] for i in range(val_start, val_end)]
                 
                 # Train and predict
                 weights = self.ridge_regression(X_fold_train, y_fold_train, alpha)
                 y_pred = self.predict_ridge(X_fold_val, weights)
                 
                 # Calculate MSE
-                mse = np.mean((y_fold_val - y_pred) ** 2)
-                cv_scores.append(mse)
+                if y_pred and y_fold_val:
+                    mse = sum((y_fold_val[i] - y_pred[i]) ** 2 for i in range(len(y_pred))) / len(y_pred)
+                    cv_scores.append(mse)
             
-            avg_score = np.mean(cv_scores)
-            if avg_score < best_score:
-                best_score = avg_score
-                best_alpha = alpha
+            if cv_scores:
+                avg_score = sum(cv_scores) / len(cv_scores)
+                if avg_score < best_score:
+                    best_score = avg_score
+                    best_alpha = alpha
         
         return best_alpha
     
-    def train_ensemble_models(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+    def train_ensemble_models(self, X_train: List[List[float]], y_train: List[List[float]]) -> None:
         """Train ensemble of models for each target"""
         print("🏗️  Training multi-target ensemble...")
         
-        n_targets = y_train.shape[1]
+        n_targets = len(y_train[0]) if y_train else 0
         
         # Alpha values to test
-        alphas = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+        alphas = [0.01, 0.1, 1.0, 10.0, 100.0]  # Reduced for speed
         
         for target_idx in range(n_targets):
             target_name = self.target_names[target_idx]
             print(f"   Training models for {target_name}...")
             
-            y_target = y_train[:, target_idx]
+            # Extract target values for this target
+            y_target = [row[target_idx] for row in y_train]
             
             # Find best alpha for this target
             best_alpha = self.cross_validate_alpha(X_train, y_target, alphas)
@@ -304,20 +523,20 @@ class ShellAIMultiTargetEnsemble:
             models['ridge_low'] = self.ridge_regression(X_train, y_target, best_alpha * 0.1)
             models['ridge_high'] = self.ridge_regression(X_train, y_target, best_alpha * 10)
             
-            # Linear regression (alpha = 0)
+            # Linear regression (small alpha)
             models['linear'] = self.ridge_regression(X_train, y_target, 0.001)
             
             self.models[target_name] = models
         
         print("✅ Multi-target ensemble training complete!")
     
-    def predict(self, X_test: np.ndarray) -> np.ndarray:
+    def predict(self, X_test: List[List[float]]) -> List[List[float]]:
         """Make predictions for all targets"""
         print("🔮 Making multi-target predictions...")
         
-        n_samples = X_test.shape[0]
+        n_samples = len(X_test)
         n_targets = len(self.target_names)
-        predictions = np.zeros((n_samples, n_targets))
+        predictions = [[0.0 for _ in range(n_targets)] for _ in range(n_samples)]
         
         for target_idx, target_name in enumerate(self.target_names):
             models = self.models[target_name]
@@ -329,16 +548,18 @@ class ShellAIMultiTargetEnsemble:
                 target_predictions.append(pred)
             
             # Ensemble prediction (simple average)
-            ensemble_pred = np.mean(target_predictions, axis=0)
-            predictions[:, target_idx] = ensemble_pred
+            if target_predictions:
+                for i in range(n_samples):
+                    avg_pred = sum(pred[i] for pred in target_predictions) / len(target_predictions)
+                    predictions[i][target_idx] = avg_pred
         
         return predictions
     
-    def evaluate_performance(self, X_train: np.ndarray, y_train: np.ndarray) -> Dict[str, float]:
+    def evaluate_performance(self, X_train: List[List[float]], y_train: List[List[float]]) -> Dict[str, float]:
         """Evaluate model performance using cross-validation"""
         print("📊 Evaluating multi-target performance...")
         
-        n_samples = X_train.shape[0]
+        n_samples = len(X_train)
         fold_size = n_samples // self.n_folds
         
         cv_scores = {target: [] for target in self.target_names}
@@ -348,16 +569,16 @@ class ShellAIMultiTargetEnsemble:
             val_start = fold * fold_size
             val_end = val_start + fold_size if fold < self.n_folds - 1 else n_samples
             
-            val_idx = list(range(val_start, val_end))
-            train_idx = list(range(0, val_start)) + list(range(val_end, n_samples))
-            
-            X_fold_train, X_fold_val = X_train[train_idx], X_train[val_idx]
-            y_fold_train, y_fold_val = y_train[train_idx], y_train[val_idx]
+            # Split data
+            X_fold_train = [X_train[i] for i in range(n_samples) if i < val_start or i >= val_end]
+            X_fold_val = [X_train[i] for i in range(val_start, val_end)]
+            y_fold_train = [y_train[i] for i in range(n_samples) if i < val_start or i >= val_end]
+            y_fold_val = [y_train[i] for i in range(val_start, val_end)]
             
             # Train models on fold
             temp_models = {}
             for target_idx, target_name in enumerate(self.target_names):
-                y_target = y_fold_train[:, target_idx]
+                y_target = [row[target_idx] for row in y_fold_train]
                 best_alpha = self.cross_validate_alpha(X_fold_train, y_target, [0.1, 1.0, 10.0])
                 temp_models[target_name] = self.ridge_regression(X_fold_train, y_target, best_alpha)
             
@@ -365,18 +586,26 @@ class ShellAIMultiTargetEnsemble:
             for target_idx, target_name in enumerate(self.target_names):
                 weights = temp_models[target_name]
                 y_pred = self.predict_ridge(X_fold_val, weights)
-                y_true = y_fold_val[:, target_idx]
+                y_true = [row[target_idx] for row in y_fold_val]
                 
                 # Calculate RMSE
-                rmse = np.sqrt(np.mean((y_true - y_pred) ** 2))
-                cv_scores[target_name].append(rmse)
+                if y_pred and y_true and len(y_pred) == len(y_true):
+                    mse = sum((y_true[i] - y_pred[i]) ** 2 for i in range(len(y_pred))) / len(y_pred)
+                    rmse = math.sqrt(mse)
+                    cv_scores[target_name].append(rmse)
         
         # Calculate average scores
         avg_scores = {}
         for target_name in self.target_names:
-            avg_scores[target_name] = np.mean(cv_scores[target_name])
+            if cv_scores[target_name]:
+                avg_scores[target_name] = sum(cv_scores[target_name]) / len(cv_scores[target_name])
+            else:
+                avg_scores[target_name] = 0.0
         
-        overall_rmse = np.mean(list(avg_scores.values()))
+        if avg_scores:
+            overall_rmse = sum(avg_scores.values()) / len(avg_scores)
+        else:
+            overall_rmse = 0.0
         avg_scores['overall'] = overall_rmse
         
         print(f"📊 Cross-Validation Results:")
@@ -385,27 +614,64 @@ class ShellAIMultiTargetEnsemble:
         
         return avg_scores
     
-    def create_submission(self, predictions: np.ndarray, test_df: pd.DataFrame, sample_df: pd.DataFrame, output_path: str = 'submission.csv') -> None:
+    def create_submission(self, predictions: List[List[float]], test_dict: Dict, sample_dict: Dict, output_path: str = 'submission.csv') -> None:
         """Create submission file"""
         print("📝 Creating submission file...")
         
-        # Create submission dataframe
-        submission = pd.DataFrame()
-        submission['ID'] = test_df['ID']
+        test_data = test_dict['data']
+        test_headers = test_dict['headers']
         
-        # Add predictions for each target
-        for i, target_name in enumerate(self.target_names):
-            submission[target_name] = predictions[:, i]
+        # Find ID column
+        id_col_idx = None
+        for i, header in enumerate(test_headers):
+            if header == 'ID':
+                id_col_idx = i
+                break
         
-        # Save submission
-        submission.to_csv(output_path, index=False)
+        # Create submission data
+        submission_data = []
+        for i, row in enumerate(test_data):
+            submission_row = []
+            
+            # Add ID
+            if id_col_idx is not None:
+                submission_row.append(row[id_col_idx])
+            else:
+                submission_row.append(i + 1)  # Fallback ID
+            
+            # Add predictions
+            if i < len(predictions):
+                submission_row.extend(predictions[i])
+            else:
+                submission_row.extend([0.0] * len(self.target_names))
+            
+            submission_data.append(submission_row)
+        
+        # Create headers
+        submission_headers = ['ID'] + self.target_names
+        
+        # Save to CSV
+        with open(output_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(submission_headers)
+            writer.writerows(submission_data)
         
         print(f"✅ Submission saved to {output_path}")
         print(f"📊 Submission statistics:")
-        print(f"   Shape: {submission.shape}")
-        print(f"   Predictions range: [{predictions.min():.4f}, {predictions.max():.4f}]")
-        print(f"   Predictions mean: {predictions.mean():.4f}")
-        print(f"   Predictions std: {predictions.std():.4f}")
+        print(f"   Shape: {len(submission_data)} x {len(submission_headers)}")
+        
+        if predictions:
+            flat_predictions = [val for row in predictions for val in row]
+            if flat_predictions:
+                pred_min = min(flat_predictions)
+                pred_max = max(flat_predictions)
+                pred_mean = sum(flat_predictions) / len(flat_predictions)
+                pred_var = sum((x - pred_mean) ** 2 for x in flat_predictions) / len(flat_predictions)
+                pred_std = math.sqrt(pred_var)
+                
+                print(f"   Predictions range: [{pred_min:.4f}, {pred_max:.4f}]")
+                print(f"   Predictions mean: {pred_mean:.4f}")
+                print(f"   Predictions std: {pred_std:.4f}")
 
 
 def main():
@@ -418,12 +684,12 @@ def main():
     
     try:
         # Load and preprocess data
-        train_df, test_df, sample_df = ensemble.load_and_preprocess_data(
+        train_dict, test_dict, sample_dict = ensemble.load_and_preprocess_data(
             'train.csv', 'test.csv', 'sample_solution.csv'
         )
         
         # Feature engineering
-        train_enhanced, test_enhanced = ensemble.engineer_features(train_df, test_df)
+        train_enhanced, test_enhanced = ensemble.engineer_features(train_dict, test_dict)
         
         # Prepare features and targets
         X_train, y_train, X_test = ensemble.prepare_features_and_targets(train_enhanced, test_enhanced)
@@ -441,7 +707,7 @@ def main():
         predictions = ensemble.predict(X_test_scaled)
         
         # Create submission
-        ensemble.create_submission(predictions, test_df, sample_df, 'submission.csv')
+        ensemble.create_submission(predictions, test_dict, sample_dict, 'submission.csv')
         
         print("\n🎉 Pipeline completed successfully!")
         print(f"🏆 Expected leaderboard score: Based on CV RMSE: {cv_scores['overall']:.4f}")
